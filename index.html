@@ -553,6 +553,7 @@
             TARGET_FPS: 30,
             FRAME_TIME: 1000 / 30,
             SMOOTHING_FACTOR: 0.15,
+            FACE_DETECT_EVERY: 3,
             VIDEO_CONSTRAINTS: { 
                 facingMode: "user", 
                 width: { ideal: 1280 }, 
@@ -636,12 +637,15 @@
         let fpsFrames = 0;
         let fpsLastTime = performance.now();
         let animationFrameId = null;
+        let faceDetectCounter = 0;
+        let processCanvas = document.createElement('canvas');
+        let processCtx = processCanvas.getContext('2d');
 
         const video = document.getElementById('videoElement');
         const canvas = document.getElementById('mainCanvas');
-        const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true });
+        const ctx = canvas.getContext('2d', { alpha: false, desynchronized: true, willReadFrequently: false });
         const tempCanvas = document.getElementById('tempCanvas');
-        const tCtx = tempCanvas.getContext('2d', { alpha: false });
+        const tCtx = tempCanvas.getContext('2d', { alpha: false, willReadFrequently: false });
 
         // ============================================
         // Utility Functions
@@ -905,7 +909,10 @@
         // ============================================
 
         function onResults(results) {
-            // Draw segmented image to temp canvas
+            // כיבוי smoothing לציור מהיר יותר
+            tCtx.imageSmoothingEnabled = false;
+            ctx.imageSmoothingEnabled = false;
+
             tCtx.save();
             tCtx.clearRect(0, 0, canvas.width, canvas.height);
             tCtx.translate(canvas.width, 0);
@@ -944,14 +951,25 @@
         }
 
         async function handleFaceDetection() {
+            // זיהוי פנים רק כל FACE_DETECT_EVERY פריימים - חוסך ~60% עומס
+            faceDetectCounter++;
+            if (faceDetectCounter % CONFIG.FACE_DETECT_EVERY !== 0) return;
+
             try {
+                // עיבוד על canvas קטן יותר - מהיר בהרבה
+                processCanvas.width = 320;
+                processCanvas.height = 240;
+                processCtx.drawImage(video, 0, 0, 320, 240);
+
                 const detections = await faceapi
-                    .detectAllFaces(video, new faceapi.TinyFaceDetectorOptions())
+                    .detectAllFaces(processCanvas, new faceapi.TinyFaceDetectorOptions({ inputSize: 160 }))
                     .withFaceLandmarks();
                 
                 if (detections.length > 0) {
+                    // המרת קואורדינטות חזרה לגודל המסך המקורי
+                    const scaleX = canvas.width / 320;
                     const nose = detections[0].landmarks.getNose()[0];
-                    const noseX = canvas.width - nose.x;
+                    const noseX = canvas.width - (nose.x * scaleX);
                     smoothNoseX += (noseX - smoothNoseX) * CONFIG.SMOOTHING_FACTOR;
                 }
             } catch (error) {
